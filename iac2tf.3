@@ -1,0 +1,43 @@
+.\" Manpage for iac2tf.
+.\" Contact https://github.com/Stevieag to correct errors or typos.
+.TH man 1 "01 Jan 2020" "1.0" "iac2tf man page"
+.SH NAME
+iac2tf \- take a IaC script Cloudformation only (others to follow) 
+.SH SYNOPSIS
+iac2tf [-f the script to translate] [the name of output script]
+.SH DESCRIPTION
+iac2tf, generally the scripts for Infrastructure as Code are generic to the provider the user is wishing to use. 
+.br
+This script will allow the input of a number of differing providers script types and will allow the transition to a central scripting with Terraform. 
+.br
+By input of an IaC file, a tf file wil be out put to the location that the script is run from.
+.SH OPTIONS
+
+		  -f	          - Allow the passing of a file to be processed.
+.br
+		  -s	          - To allow passing of a script to be processed instead of a file
+.br
+            -o	          - output file name
+.br
+            -gui	     - Open a graphic user interface to interact with the script
+.br
+            --help (-h)  - Shows options
+.SH SEE ALSO
+------------ 
+.SH BUGS
+Only AWS CloudFormation S3 Buckets can be processed at this time.
+.SH EXAMPLE
+▶ iac2tf -f myiaciputscript tfoutputfilename
+.br
+▶ iac2tf -gui
+.br
+▶ iac2tf -h | --help
+.br
+▶ iac2tf -f myiaciputscript                         $>ia2tf -f ~/cloudformation.json
+.br
+▶ iac2tf -f myiaciputscript -o mytfoutputname       $>ia2tf -f ~/cloudformation.json -o cloudformationoutout
+.br
+▶ iac2tf -f myiaciputscript -s {[IaC script json]}  $>ia2tf -f ~/cloudformation.json -s '{"AWSTemplate"{....."S3"}}'
+
+.SH AUTHOR
+Stephen P Agius (https://github.com/Stevieag)

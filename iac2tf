@@ -1,0 +1,431 @@
+#!/bin/bash
+#set -aBvx
+
+#array declaration ready for collecting higher resource set numbers
+#declare -a arrayOfResources
+
+#Set colours for indicative text output
+blue=$(tput setaf 4);green=$(tput setaf 2);normal=$(tput sgr0);red=$(tput setaf 1);\
+yellow=$(tput setaf 3);white=$(tput setaf 7);bright=$(tput bold);pblue=$(tput setaf 5);underline=$(tput smul)
+
+#To provide re-usable high contrast input example
+function inputEg { 
+	printf "%4s\n"\
+		"
+		 ${red} ▶${white} iac2tf 					${pblue}This welcome screen :D - Hello
+		 ${red} ▶${white} iac2tf ${green}-gui					${pblue}Shows a graphical interface
+		 ${red} ▶${white} iac2tf ${green}-h or --help 			${pblue}Shows some command examples
+		
+		 ${red} ▶${white} iac2tf ${green}-f${blue} myiaciputscript ${white}		
+		  -> ${red}ia2tf -f ~/cloudformation.json
+
+		 ${red} ▶${white} iac2tf ${green}-f${blue} myiaciputscript ${yellow}-o ${pblue} mytfoutputname ${white}
+		  -> ${red}ia2tf -f ~/cloudformation.json -o cloudformationoutout
+
+		 ${red} ▶${white} iac2tf ${green}-s${pblue} {[IaC script eg Cloud Formation json]}${white}
+		  -> ${red}ia2tf -s ${white}'${red}{"AWSTemplate"{....."S3"}}${white}'
+
+		 ${red} ▶${white} iac2tf ${green}-s${pblue} {[IaC script eg Cloud Formation json]} ${yellow}-o ${pblue} mytfoutputname ${white}
+  		  -> ${red}ia2tf -s ${white}'${red}{"AWSTemplate"{....."S3"}} -o mytfoutputname ${white}'
+
+"
+	printf	"\n"
+}
+
+function scriptChecker {
+	if test -z "$inputScript"
+	then
+		printf "%4s\n" "${red}No input script offered, Please see -h${normal}${bright}"
+		exit
+	fi 
+}
+
+function helpEg {
+				printf "%4s\n"	"${white}${bright}OPTIONS${normal}
+			-f	     - Allow the passing of a file to be processed.
+			-s	     - To allow passing of a script to be processed instead of a file
+			-o	     - output file name
+			-gui	     - Open a graphic user interface to interact with the script
+			--help (-h)  - Shows options${bright}
+					"
+}
+
+#Test for argument input
+function argumentInput {
+	case "$inArg" in
+		"-gui") python3 gui.py ;;	
+		"-s")	fileOrBypass="bypass"
+				scriptChecker
+				jsonReader "$inputScript";;
+		"-Sec")	fileOrBypass="bypass"
+				s3Test -direct ;;
+		"-f") 	fileOrBypass="file"
+				scriptChecker
+				fileType "$inputScript" ;;
+		"-h" | "--help") 	c=0;while [ $c -lt 65 ];do printf "%4s" "${yellow}-";c=$(( c + 1 ));done; printf "\n\n"
+			printf "%4s\n"	"${green}iac2tf - take a IaC script Cloudformation only (others to follow)"\
+					""
+					inputEg 
+					helpEg
+			c=0;while [ $c -lt 65 ];do printf "%4s" "${yellow}-";c=$(( c + 1 ));done; printf "\n"
+			;;
+		"-help") printf "\n${bright}${red}Did you mean ${white}--help\n\n" ;;
+		*) welcome ;;
+	esac
+}
+
+#Display ASCII art logo and provide script help 
+ function welcome {
+	printf "%4s\n"\
+	"
+	${red}    ____        ______   ___      __   ____
+	   /  _/____ _ / ____/  |__ \    / /_ / __/
+	   / / / __ \`// /       __/ /   / __// /_  
+	 _/ / / /_/ // /___    / __/   / /_ / __/  
+	/___/ \__,_/ \____/   /____/   \__//_/     
+	
+	${blue}${underline}${bright}IaC Translation Script.
+	${normal}${bright}${green}Feel free to offer contribution at 'https://github.com/Stevieag'
+	
+	${white}
+	By providing a Iac Scripting via file or Script, this
+	this application will decifer the type, the provider and
+	the infrastructure that is needed to be created and then
+	create the needed Terraform script that you can then run
+	to bring up your replica infrastructure
+	"
+	inputEg
+}
+
+
+#detirmine the filetype input and direct to appropriate function to deal with such
+#additionally outputs type seen if can not be processed
+function fileType {
+    	case "$(mimetype -b "$inputScript")" in
+        	 "application/json")   	jsonReader "$fileOrBypass" "$inputScript".;;
+        	 "application/x-yaml") 	echo "YAML" ;;
+        	 *) printf "The file is ${red}$(mimetype -b "$inputScript")${normal}\n${bright}This file type cannot be processed\n" ;;
+    	esac
+}
+
+#Will parse the json found to create the correct variables to then pass to the creation function
+function jsonReader {
+	
+	#Check if AWS
+	if test -f "$inputScript"
+	then
+		fileOrBypass='file'
+	fi
+	case "$fileOrBypass" in
+		"file")		cat "$inputScript" | head | grep "AWS" 1>/dev/null
+					if [ $? -ne 1 ];
+					then       
+						provider="AWS"
+						jsonInput=$( cat  "$inputScript")
+					else
+						printf "This failed to parse"
+						exit
+					fi ;;
+		"bypass") 	echo "$inputScript" | grep "AWS"
+					if [ $? -ne 1 ];
+					then       
+						provider="AWS"
+						jsonInput=$( echo  "$inputScript")
+					else
+						printf "This failed to parse"
+						exit
+					fi ;;
+	esac
+	if test -n $provider
+	then
+		if [[ $(echo $provider) == "AWS" ]] ;
+		then
+			tfile=$(mktemp /tmp/$(echo $provider | cut -d : -f 1 | awk '{print $1}' | tr -d '"').XXXXXXXX)	
+			resources=$(echo "$jsonInput" | jq -r '.| .Resources[]')
+			resourceType=$(echo "$resources" | jq -r '.Type' | head -1 | cut -d : -f 3)
+			if [ $(echo "$jsonInput" | jq -r '.| .Resources[].Properties.AccessControl' | head -1) == "PublicRead" ]; 
+			then
+				acl="public-read"
+			fi	
+			if [ $(echo $jsonInput | jq -r  '.Resources.S3Bucket.Properties.WebsiteConfiguration' | head -2 | tr -d '{\n ":}' ) == RedirectAllRequestsTo ];
+			then
+				redirect=$(echo " website {redirect_all_requests_to = "$(echo "$jsonInput" | jq '.Resources.S3Bucket.Properties.WebsiteConfiguration.RedirectAllRequestsTo[]') "}")
+			fi 
+			statement=$(echo "$jsonInput" | jq -c '.| .Resources[].Properties.PolicyDocument.Statement[]?'| awk -F '\\"Resource' '{print $1""}')
+			tfBuilder
+		fi
+	else       
+		printf "Provider is not found"
+		exit
+    fi
+}
+
+#if
+function whatAWSResourceIsIt { 
+	case "$resourceType" in
+                "S3")   resourceType="aws_s3_bucket" ;;
+                "dynamodb")  echo "aws_dynamodb_tabl" ;;
+                *) echo 'What Is It' ; exit ;;
+        esac
+
+}
+
+function getName {
+	printf "Please provide a $1 for this $resourceType\n"
+	while [ -z "$returned" ] ; do
+		read -r name
+		returned=$(echo "$name" | awk '{print tolower($1)}' | sed "s/[^[:alpha:]^[:digit:]]//g")
+	done
+}
+
+function tfBuilder {
+#create a temp terraform file and output when finished
+	#Check provider and create tf to suit
+ 	case "$provider" in
+				"AWS")	if test -z "$resourceName" 
+						then
+							if [ "$outArg" == '-o' ]
+							then
+								printf "${red}output flag seen but output name not found\n"${white}""
+							fi
+							getName	name
+							resourceName=$returned
+							returned=""
+						fi
+						case "$resourceType" in
+                			"S3")   resourceType="aws_s3_bucket"
+									s3Build ;;
+                			"dynamodb")  echo "aws_dynamodb_tabl" ;;
+                			*) echo 'What Is It' ; exit ;;
+        				esac
+					;;
+				*) 	printf "The Provider was not found" ;;
+		esac
+}
+
+function s3Build {
+	profile=$( cat ~/.aws/config | head -1 | sed "s/[^[:alpha:]^[:digit:]]//g" )
+	region=$( cat ~/.aws/config | grep 'region' | awk '{print $NF}' )
+	printf 'provider "aws" { \n\tprofile = "'$profile'" \n\tregion = "'$region'" \n}\n'										>> "$tfile"
+	#create resource type
+	printf 'resource "'$resourceType'" "'$resourceName'" {\n'																>> "$tfile"
+	#dependant of type, select following sytax (ONLY S3 BUCKETS AT MO SO MAY SEEM POINTLESS BUT A SWITCH ETC WHEN GROWN)
+	printf '\tbucket\t=\t"'$resourceName'"\n\tacl\t=\t"'$acl'"\n'															>> "$tfile"
+	printf '\tpolicy\t=\t<<EOF\n{\n\t\t\t"Version"\t:\t"2012-10-17",\n\t\t\t"Id"\t\t:\t"MyPolicy",\n\t\t\t"Statement": ['	>> "$tfile"
+	printf "$statement"'"Resource":"arn:aws:s3:::'$resourceName'/*"}\n]\n}\nEOF\n' 											>> "$tfile"
+	if [[ -n $redirect ]]; 
+	then
+	echo ""; echo "$redirect"																								>> "$tfile"
+	fi
+	printf '\n}' 																											>> "$tfile"
+	cat "$tfile" > "$PWD/$resourceName.tf" ; printf "${bright}${green}The Terraform file for the ${blue}"$resourceType"\n${green}is now placed here "$PWD"\nby the name "$resourceName"${white} =\n${yellow}"$PWD/$resourceName.tf ; echo ''
+	fileToRun=$PWD"/"$resourceName".tf"		
+	sleep 3		
+	if [ "$inArg" == "-s" ] ; then
+		exit
+	elif [ "$inArg" == "-Sec" ] ; then
+		s3Test -direct
+	else
+		printf "%b\n" "\n${bright}${red}Would you like the s3 bucket security testing?${white}"
+		read -r testBucket
+		toTest=$(echo "$testBucket" | awk '{print tolower($1)}' | sed "s/[^[:alpha:]^[:digit:]]//g")
+		if [ "$toTest" == "y" ] ;
+        then
+            s3Test -inline
+        else
+			exit
+		fi
+	fi
+}
+
+function s3Test {
+    function runTest {
+		clear 
+		printf "%b\n" "\n${bright}${yellow}Testing of the S3 Bucket For Security${white}"
+		initTfFolder
+	}
+	function initTfFolder {
+    	printf "%b\n" "\n${bright}${blue}Initiate the folder for terraform creation${white}"
+    	    read -r approveAction
+    	    approved=$(echo "$approveAction" | awk '{print tolower($1)}' | sed "s/[^[:alpha:]^[:digit:]]//g")
+    	    if [ "$approved" == "y" ] ;
+    	    then
+    	        terraform init
+    	    fi 
+    	    approvalAction=""
+			tfApply
+	}
+	function tfApply {
+    	printf "%b\n" "\n${bright}${blue}Bring up and apply the Terraform for testing${white}"
+    	read -r approveAction
+    	    approved=$(echo "$approveAction" | awk '{print tolower($1)}' | sed "s/[^[:alpha:]^[:digit:]]//g")
+			if [ "$approved" == "y" ] ;
+    	    then
+    	        terraform apply -auto-approve
+    	    fi
+    	    approvalAction=""
+			scanner
+	}
+    function scanner { 
+		echo "$1"  	
+		printf "%b\n" "${bright}${red}*******************************************************"
+		printf "%b\n" "${bright}${red}***************         WARNING         ***************"
+		printf "%b\n" "${bright}${red}****                    -------                    ****"
+		printf "%b\n" "${bright}${red}****  THIS WILL INSTALL SOFTWARE NAMED S3 SCANNER  ****"
+		printf "%b\n" "${bright}${red}****                AND VIRTUALENV                 ****"
+		printf "%b\n" "${bright}${red}****  THIS IS CONFIGURED TO SCAN ALL YOUR BUCKETS  ****" 
+		printf "%b\n" "${bright}${red}****                                               ****"
+		printf "%b\n" "${bright}${red}*******************************************************${white}\n"
+		printf "%b\n" "\n${bright}${blue}Initiate the testing"
+		if [ "$1" != "y" ]; 
+		then 
+			read -r approveAction
+   	    	approved=$(echo "$approveAction" | awk '{print tolower($1)}' | sed "s/[^[:alpha:]^[:digit:]]//g")
+	 	fi
+		if [[ "$approved" == "y" || "$1" == "y" ]] ;
+   	    then
+			if [ "$1" != "y" ]; 
+			then
+				sudo apt update && sudo apt-get install python3-venv
+			fi
+			python3 -m venv scanner && source ./scanner/bin/activate
+			cd scanner
+			wget https://github.com/jordanpotti/AWSBucketDump/archive/master.zip
+			unzip master.zip
+			cd AWSBucketDump-master/
+			# cp ../AWSBucketDump.zip .
+			# unzip AWSBucketDump.zip
+			# cd AWSBucketDump/
+			pip3 install -r requirements.txt
+			################################
+			echo "$resourceName" > BucketNames.txt
+			python3 AWSBucketDump.py -l BucketNames.txt -g interesting_Keywords.txt -D -m 500000 -d 1
+			cat interesting_file.txt 1>/dev/null
+			if [ "$?" -ne 1 ];
+			then       
+				cp interesting_file.txt ../../files_found.txt
+				printf "%b\n""${bright}${red}#############################\n########## WARNING ##########\n#############################\n##                         ##\n## FILES FOUND, BUCKET NOT ##\n##  SECURE. IF NOT DESIRED ##\n## PLEASE CHANGE TO SUIT   ##\n##                         ##\n#############################\n"
+				isSecure="n"
+				printf "%b\n""\n${bright}${green}Show the files found?${white}\n"
+	   			read -r approveAction
+   				approved=$(echo "$approveAction" | awk '{print tolower($1)}' | sed "s/[^[:alpha:]^[:digit:]]//g")
+				if [[ $approved == "y" || $1 == "y" ]] ;
+   	    		then
+   	    			command -v vi 1>/dev/null
+					if [ "$?" -ne 1 ];
+   					then
+						x-terminal-emulator -e vi "$PWD"/../../files_found.txt && clear
+	   				else
+						command -v nano 1>/dev/null
+						if [ "$?" -ne 1 ];
+   						then
+							x-terminal-emulator -e nano "$PWD"/../../files_found.txt && clear
+   						fi
+					fi
+				fi
+			else
+				printf "%b\n""${bright}${green}################################\n#########  GOOD NEWS   #########\n################################\n##                            ##\n##  NO FILES FOUND,SO BUCKET  ##\n##    SEEMS SECURE. IF NOT    ##\n##   DESIRED, CHANGE TO SUIT  ##\n##                            ##\n################################\n"
+				isSecure="y"
+			fi
+			cd ../..
+			deactivate
+			rm -rf scanner
+   	    fi
+   	    approvalAction=""
+		if [[ "$1" != "y" ]];then
+			destruct
+		fi
+	}
+	function destruct {
+    	if [ "$1" != "y" ]; 
+		then
+			printf "%b\n""\n${bright}${red}Initiate the destruction of the infrastrucure${white}\n"
+    		read -r approveAction
+   	    	approved=$(echo "$approveAction" | awk '{print tolower($1)}' | sed "s/[^[:alpha:]^[:digit:]]//g")
+		fi
+		if [[ "$approved" == "y" || "$1" == "y" ]] ;
+   	    then
+   	        terraform destroy -auto-approve
+			rm -rf terraform.tfstate*				
+   	    fi
+   	    approvalAction=""
+	}        
+	
+	case "$1" in
+		"-inline")   	runTest ;;
+		"-direct")		directSecCheck ;;
+				*)   	echo 'Error' 
+						exit ;;
+	esac
+	#runTest	
+	rm -r "$PWD"/.terraform 
+
+}
+
+function directSecCheck {
+	tempdir=$(mktemp -d -t iac2tf-XXXXXXXXXX --tmpdir=/tmp)
+	randomstring=$( cat /dev/urandom | tr -dc 'a-z' | fold -w 32 | head -n 1 )
+	resourceName=$(echo $randomstring)
+	cd "$tempdir"
+	echo "$inputScript" >> "$tempdir/$resourceName.tf"
+	#x-terminal-emulator -e nano "$tfile"
+	terraform init
+	terraform fmt
+	terraform apply -auto-approve
+	scanner y
+	destruct y 
+	declare SECORNOT='NOOOOOOOOOOOO'
+	#echo $SECORNOT
+	rm -r "$PWD"/.terraform
+	printf $isSecure
+	exit
+	#$isSecure
+	
+}
+
+# Create a temp yaml file and output when finished
+# function yamlBuilder {
+# echo 'YAML Builder'
+# }
+
+#Check and advise on JQ being installed and instruct if not
+command -v jq 1>/dev/null
+if [ "$?" -ne 0 ];
+        then
+		printf "%b\n" "\n${bright}${red}Please ensure you have JQ the lightweight and flexible command-line JSON processor${white}"
+		versionOfLinux=$(cat /etc/os-release | grep ID_LIKE | cut -d = -f 2 | tr '[:lower:]' '[:upper:]')
+		case "$versionOfLinux" in
+			"DEBIAN" | "UBUNTU") 	printf "\nInstall using sudo apt-get install jq\n\n" && exit ;;
+
+			"FEDORA" )				printf "\nInstall using sudo dnf install jq\n\n" && exit;;
+			"OPENSUSE" )			printf "\nInstall using sudo zypper install jq\n\n" && exit ;;
+			"ARCH" )				printf "\nInstall using sudo pacman -Sy jq\n\n" && exit;;		
+			*) 						printf "\nPlease follow the instruction upon the\nhttps://stedolan.github.io/jq/download/\n\n" && exit ;;
+		esac
+
+        fi
+
+command -v terraform 1>/dev/null
+	if [ "$?" -ne 0 ];
+    then
+		printf "%b\n" "\n${bright}${red}Please ensure you have Terraform install\nSome tests may be run eg On S3\n${white}"
+		printf "\nPlease follow the instruction upon\nhttps://www.terraform.io/downloads.html\n\n" && exit
+    fi
+
+
+command -v aws 1>/dev/null
+if [ "$?" -ne 0 ];
+        then
+		printf "%b\n" "\n${bright}${red}Please ensure you have AWS Cli${white}"
+		printf "Navigate to"
+		printf "\nhttps://docs.aws.amazon.com/cli/latest/userguide/cli-chap-install.html\n\n" && exit 
+        fi
+
+#Run the argument Input function passing inputs, checking
+#echo $@
+inArg="$1"
+inputScript="$2"
+outArg="$3"
+resourceName=$(echo "$4" | awk '{print tolower($1)}' | sed "s/[^[:alpha:]^[:digit:]]//g")
+argumentInput
+#clear
